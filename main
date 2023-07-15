@@ -1,218 +1,168 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import keras
 import cv2
-from keras.models import Sequential
-from tensorflow.keras.optimizers import Adam
-from keras.layers import Dense
-from keras.utils.np_utils import to_categorical
-from keras.layers import Dropout, Flatten
-from keras.layers.convolutional import Conv2D, MaxPooling2D
-import pickle
-import random
-import pandas as pd
+from os import listdir
+from sklearn.utils import shuffle
+import tensorflow as tf
+import imutils
+from tensorflow.keras.models import Model, load_model
+from sklearn.model_selection import train_test_split
+#method for cropping image i.e. for getting brain area
+def crop_brain_contour(image, plot=False):
+    
+    
+    # Convert the image to grayscale, and blur it slightly
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    gray = cv2.GaussianBlur(gray, (5, 5), 0)
 
-np.random.seed(0)
+    # Threshold the image, then perform a series of erosions +
+    # dilations to remove any small regions of noise
+    thresh = cv2.threshold(gray, 45, 255, cv2.THRESH_BINARY)[1]
+    thresh = cv2.erode(thresh, None, iterations=2)
+    thresh = cv2.dilate(thresh, None, iterations=2)
 
-!git clone https: // bitbucket.org / jadslim / german - traffic - signs
+    # Find contours in thresholded image, then grab the largest one
+    cnts = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    cnts = imutils.grab_contours(cnts)
+    c = max(cnts, key=cv2.contourArea)
+    
 
-with open('german-traffic-signs/train.p', 'rb') as f:
-    train_data = pickle.load(f)
-with open('german-traffic-signs/valid.p', 'rb') as f:
-    val_data = pickle.load(f)
-with open('german-traffic-signs/test.p', 'rb') as f:
-    test_data = pickle.load(f)
+    # Find the extreme points
+    extLeft = tuple(c[c[:, :, 0].argmin()][0])
+    extRight = tuple(c[c[:, :, 0].argmax()][0])
+    extTop = tuple(c[c[:, :, 1].argmin()][0])
+    extBot = tuple(c[c[:, :, 1].argmax()][0])
+    
+    # crop new image out of the original image using the four extreme points (left, right, top, bottom)
+    new_image = image[extTop[1]:extBot[1], extLeft[0]:extRight[0]]            
 
-X_train, y_train = train_data['features'], train_data['labels']
-X_val, y_val = val_data['features'], val_data['labels']
-X_test, y_test = test_data['features'], test_data['labels']
+    if plot:
+        plt.figure()
 
-print(X_train.shape)
-print(X_val.shape)
-print(X_test.shape)
+        plt.subplot(1, 2, 1)
+        plt.imshow(image)
+        
+        plt.tick_params(axis='both', which='both', 
+                        top=False, bottom=False, left=False, right=False,
+                        labelbottom=False, labeltop=False, labelleft=False, labelright=False)
+        
+        plt.title('Original Image')
+            
+        plt.subplot(1, 2, 2)
+        plt.imshow(new_image)
 
-assert (X_train.shape[0] == y_train.shape[0]), "The number of images is not equal to the number of labels"
-assert (X_val.shape[0] == y_val.shape[0]), "The number of images is not equal to the number of labels"
-assert (X_test.shape[0] == y_test.shape[0]), "The number of images is not equal to the number of labels"
-assert (X_train.shape[1:] == (32, 32, 3)), "The dimensions of the image is not 32*32*3"
-assert (X_val.shape[1:] == (32, 32, 3)), "The dimensions of the image is not 32*32*3"
-assert (X_test.shape[1:] == (32, 32, 3)), "The dimensions of the image is not 32*32*3"
+        plt.tick_params(axis='both', which='both', 
+                        top=False, bottom=False, left=False, right=False,
+                        labelbottom=False, labeltop=False, labelleft=False, labelright=False)
 
-data = pd.read_csv('german-traffic-signs/signnames.csv')
+        plt.title('Preprocessed Image')
+        
+        plt.show()
+    
+    return new_image
+# function for loading images and labels into X and y..in X, it will store images.. 
+#and in y it will store actual image label (0 or 1) for each image..if 0 no tumor,1 then tumorous image
+def load_data(dir_list, image_size):
+    
+    # load all images in a directory
+    X = []
+    y = []
+    
+    image_width, image_height = image_size
+    
+    for directory in dir_list:
+        for filename in listdir(directory):
+            # load the image
+            image = cv2.imread(directory + '/' + filename)
+            
+            # crop the brain and ignore the unnecessary rest part of the image
+            image = crop_brain_contour(image, plot=False)
+            # resize image
+            image = cv2.resize(image, dsize=(image_width, image_height), interpolation=cv2.INTER_CUBIC)
+            # normalize values
+            image = image / 255.
+            # convert image to numpy array and append it to X
+            X.append(image)
+            # append a value of 1 to the target array if the image
+            # is in the folder named 'yes', otherwise append 0.
+            if directory[-3:] == 'yes':
+                y.append([1])
+            else:
+                y.append([0])
+                
+    X = np.array(X)
+    y = np.array(y)
+    
+    # Shuffle the data
+    X, y = shuffle(X, y)
+    
+    print(f'Number of examples is: {len(X)}')
+    print(f'X shape is: {X.shape}')
+    print(f'y shape is: {y.shape}')
+    
+    return X, y
+#path for yes and no folder
+no = "/content/drive/MyDrive/Colab Notebooks/Datasets/Brain tumor detection/no"
+yes = "/content/drive/MyDrive/Colab Notebooks/Datasets/Brain tumor detection/yes"
+#image size specified
+IMG_WIDTH, IMG_HEIGHT = (256, 256)
+#calling load function for loading X,y data by passing both folder paths
+X, y = load_data([yes,no], (IMG_WIDTH, IMG_HEIGHT))
+def split_data(X, y, test_size=0.2):
+    
+    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=test_size)
+    
+    return X_train, y_train, X_test, y_test
+#data splitting
+X_train, y_train,X_test, y_test = split_data(X, y, test_size=0.1)
+#loading vgg16 pretrained model
+from keras.applications.vgg16 import VGG16
+SIZE=256
+VGG_model=VGG16(input_shape=(SIZE,SIZE,3),include_top=False,weights='imagenet')
+#we are not not using VGG16 model for training...so we made all layers as non trainable
+for layer in VGG_model.layers:
+    layer.trainable=False
+VGG_model.summary()
+#extract features for training data
+feature_ex=VGG_model.predict(X_train)
+feature_ex.shape
+features=feature_ex.reshape(feature_ex.shape[0],-1)
+features.shape
+#extract features for testing data
+test_feature_ex=VGG_model.predict(X_test)
+test_features=test_feature_ex.reshape(test_feature_ex.shape[0],-1)
+from sklearn import svm
 
-num_of_samples = []
+#Create a svm Classifier
+clf = svm.SVC(kernel='linear') # Linear Kernel
 
-cols = 5
-num_classes = 43
+#Train the model using thetraining features extracted by VGG16 i.e.features...and the labels i.e y_train
+clf.fit(features, y_train)
 
-fig, axs = plt.subplots(nrows=num_classes, ncols=cols, figsize=(5, 50))
-fig.tight_layout()
-
-for i in range(cols):
-    for j, row in data.iterrows():
-        x_selected = X_train[y_train == j]
-        axs[j][i].imshow(x_selected[random.randint(0, (len(x_selected) - 1)), :, :], cmap=plt.get_cmap("gray"))
-        axs[j][i].axis("off")
-        if i == 2:
-            axs[j][i].set_title(str(j) + "_" + row["SignName"])
-            num_of_samples.append(len(x_selected))
-
-print(num_of_samples)
-plt.figure(figsize=(12, 4))
-plt.bar(range(0, num_classes), num_of_samples)
-plt.title("Training Dataset Distribution")
-plt.xlabel("Class number")
-plt.ylabel("Number of images")
-
-plt.imshow(X_train[1000])
-plt.axis('off')
-print(X_train[1000].shape)
-print(y_train[1000])
-
-
-def grayscale(img):
-    image = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
-    plt.axis('off')
-    return image
-
-
-img = grayscale(X_train[1000])
-plt.imshow(img, cmap='gray')
-print(img.shape)
-
-
-def equalize(img):
-    img = cv2.equalizeHist(img)
-    return img
-
-
-img = equalize(img)
-plt.imshow(img, cmap='gray')
-plt.axis('off')
-print(img.shape)
-
-
-def preprocessing(img):
-    img = grayscale(img)
-    img = equalize(img)
-    img = img / 255
-    return img
-
-
-X_train = np.array(list(map(preprocessing, X_train)))
-X_val = np.array(list(map(preprocessing, X_val)))
-X_test = np.array(list(map(preprocessing, X_test)))
-
-X_train = X_train.reshape(34799, 32, 32, 1)
-X_val = X_val.reshape(4410, 32, 32, 1)
-X_test = X_test.reshape(12630, 32, 32, 1)
-
-from keras.preprocessing.image import ImageDataGenerator
-
-datagen = ImageDataGenerator(width_shift_range=0.1,
-                             height_shift_range=0.1,
-                             zoom_range=0.2,
-                             shear_range=0.1,
-                             rotation_range=10)
-
-datagen.fit(X_train)
-
-batches = datagen.flow(X_train, y_train, batch_size=20)
-X_batch, y_batch = next(batches)
-
-fig, axs = plt.subplots(1, 15, figsize=(20, 5))
-fig.tight_layout()
-
-for i in range(15):
-    axs[i].imshow(X_batch[i].reshape(32, 32))
-    axs[i].axis('off')
-
-batches = datagen.flow(X_train, y_train, batch_size=20)
-X_batch, y_batch = next(batches)
-
-fig, axs = plt.subplots(1, 15, figsize=(20, 5))
-fig.tight_layout()
-
-for i in range(15):
-    axs[i].imshow(X_batch[i].reshape(32, 32))
-    axs[i].axis('off')
-
-y_train = to_categorical(y_train, 43)
-y_val = to_categorical(y_val, 43)
-y_test = to_categorical(y_test, 43)
-
-
-def neural_model():
-    model = Sequential()
-    model.add(Conv2D(60, (5, 5), input_shape=(32, 32, 1), activation='relu'))
-    model.add(Conv2D(60, (5, 5), input_shape=(32, 32, 1), activation='relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-
-    model.add(Conv2D(30, (3, 3), activation='relu'))
-    model.add(Conv2D(30, (3, 3), activation='relu'))
-    model.add(MaxPooling2D(pool_size=(2, 2)))
-
-    # model.add(Dropout(0.5))
-
-    model.add(Flatten())
-    model.add(Dense(500, activation='relu'))
-    model.add(Dropout(0.5))
-    model.add(Dense(num_classes, activation='softmax'))
-    model.compile(Adam(lr=0.001), loss='categorical_crossentropy', metrics=['accuracy'])
-    return model
+#Predict the response for test features
+y_pred = clf.predict(test_features)
+#testing accuracy
+from sklearn import metrics
+metrics.accuracy_score(y_test,y_pred)
+from sklearn.datasets import make_circles
+from sklearn.metrics import accuracy_score
+from sklearn.metrics import precision_score
+from sklearn.metrics import recall_score
+from sklearn.metrics import f1_score
+from sklearn.metrics import cohen_kappa_score
+from sklearn.metrics import roc_auc_score
+from sklearn.metrics import confusion_matrix
 
 
-model = neural_model()
-print(model.summary())
-
-history = model.fit_generator(datagen.flow(X_train, y_train, batch_size=50), steps_per_epoch=100, epochs=20,
-                              validation_data=(X_val, y_val), shuffle=1)
-
-plt.plot(history.history['loss'])
-plt.plot(history.history['val_loss'])
-plt.plot(history.history['accuracy'])
-plt.plot(history.history['val_accuracy'])
-plt.legend(['loss', 'val_loss', 'accuracy', 'val_acc'])
-plt.title('Loss & Accuracy')
-plt.xlabel('epoch')
-
-score = model.evaluate(X_test, y_test, verbose=1)
-print('Test Score', score[0])
-print('Test Accuracy', score[1])
-
-import requests
-from PIL import Image
-
-url = 'https://c8.alamy.com/comp/A0RX23/cars-and-automobiles-must-turn-left-ahead-sign-A0RX23.jpg'
-r = requests.get(url, stream=True)
-image = Image.open(r.raw)
-plt.axis('off')
-plt.imshow(image, cmap=plt.get_cmap('gray'))
-
-img = np.asarray(image)
-img = cv2.resize(img, (32, 32))
-img = preprocessing(img)
-plt.imshow(img, cmap=plt.get_cmap('gray'))
-print(img.shape)
-img = img.reshape(1, 32, 32, 1)
-
-predict_x = model.predict(img)
-classes_x = np.argmax(predict_x, axis=1)
-
-pred = predict_x
-plt.imshow(image)
-plt.axis('off')
-
-for num, name in data.iteritems():
-    name = name.values
-
-
-    def f(x):
-        return int(x)
-
-
-    f2 = np.vectorize(f)
-    x = np.arange(1, 15.1, 0.1)
-    plt.plot(x, f2(x))
-    plt.show()
-
+# accuracy: (tp + tn) / (p + n)
+accuracy_svm = accuracy_score(y_test, y_pred)
+print('Accuracy: %f' % accuracy_svm)
+# precision tp / (tp + fp)
+precision_svm = precision_score(y_test, y_pred)
+print('Precision: %f' % precision_svm)
+# recall: tp / (tp + fn)
+recall_svm = recall_score(y_test, y_pred)
+print('Recall: %f' % recall_svm)
+# f1: 2 tp / (2 tp + fp + fn)
+f1_svm = f1_score(y_test, y_pred)
+print('F1 score: %f' % f1_svm)
